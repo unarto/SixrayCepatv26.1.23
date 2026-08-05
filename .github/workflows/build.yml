@@ -1,0 +1,219 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        required: false
+        type: string
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        submodules: 'recursive'
+        fetch-depth: '0'
+
+
+    - name: Setup Java
+      uses: actions/setup-java@v5
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3.2.0
+      with:
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '13114758'
+        packages: 'platforms;android-36.1 build-tools;36.1.0 platform-tools'
+
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+          --channel=0 \
+          --install "ndk;28.2.13676358"
+
+        echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+
+        sed -i '10i\
+            ndkVersion = "28.2.13676358"' \
+          "${{ github.workspace }}/app/build.gradle.kts"
+
+
+    # --- BAGIAN 1: XRAY CORE AAR ---
+    - name: Prepare Xray-core v26.1.23 AAR
+      run: |
+        set -e
+
+        APP_DIR="${{ github.workspace }}/app"
+
+        mkdir -p "$APP_DIR/libs"
+        mkdir -p "$APP_DIR/src/main/assets"
+
+        VERSION_TAG="26.1.23"
+
+        echo "Downloading libv2ray.aar v${VERSION_TAG}"
+
+        wget -nv \
+          "https://github.com/unarto/Androidlibxraylitev26.1.23/releases/download/V26.1.23/libv2ray.aar" \
+          -O "$APP_DIR/libs/libv2ray.aar"
+
+
+        echo "=== libv2ray.aar ==="
+        ls -lh "$APP_DIR/libs/libv2ray.aar"
+
+
+        echo "=== Check geoip/geosite ==="
+
+        unzip -l "$APP_DIR/libs/libv2ray.aar" | grep -E "geoip|geosite" || true
+
+
+        echo "[✓] Xray-core v${VERSION_TAG} AAR siap"
+
+
+    # --- BAGIAN 2: CACHE & COMPILE LIBHEVTUN ---
+    - name: Restore cached libhevtun
+      id: cache-libhevtun-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ github.workspace }}/libs
+        key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+
+    - name: Build libhevtun
+      if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+      run: |
+        bash compile-hevtun.sh
+
+
+    - name: Save libhevtun
+      if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ github.workspace }}/libs
+        key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+
+    - name: Compress libhevtun to ZIP
+      run: |
+        zip -r hev-socks5-tunnel-libs.zip libs
+
+
+    - name: Copy libhevtun to app
+      run: |
+        cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/app
+
+
+
+    # --- BAGIAN 3: BUILD APK ---
+    - name: Decode Keystore
+      uses: timheuer/base64-to-file@v1.2.4
+      id: android_keystore
+      with:
+        fileName: "android_keystore.jks"
+        encodedString: ${{ secrets.APP_KEYSTORE_BASE64 }}
+
+
+    - name: Build APK
+      run: |
+        cd ${{ github.workspace }}
+
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+
+        chmod 755 gradlew
+
+        ./gradlew licenseFdroidReleaseReport
+
+        ./gradlew assembleRelease \
+          -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} \
+          -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} \
+          -Pandroid.injected.signing.store.type=jks \
+          -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} \
+          -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
+
+
+
+    # --- BAGIAN 4: UPLOAD APK ---
+    - name: Upload arm64-v8a APK
+      uses: actions/upload-artifact@v6
+      if: success()
+      with:
+        name: arm64-v8a
+        path: app/build/outputs/apk/*/release/*arm64-v8a*.apk
+
+
+    - name: Upload armeabi-v7a APK
+      uses: actions/upload-artifact@v6
+      if: success()
+      with:
+        name: armeabi-v7a
+        path: app/build/outputs/apk/*/release/*armeabi-v7a*.apk
+
+
+    - name: Upload x86 APK
+      uses: actions/upload-artifact@v6
+      if: success()
+      with:
+        name: x86
+        path: app/build/outputs/apk/*/release/*x86*.apk
+
+
+    - name: Upload x86_64 APK
+      uses: actions/upload-artifact@v6
+      if: success()
+      with:
+        name: x86_64
+        path: app/build/outputs/apk/*/release/*x86_64*.apk
+
+
+
+    # --- BAGIAN 5: RELEASE ---
+    - name: Generate Release Tag
+      run: |
+        if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+          TAG="v2.0.${{ github.run_number }}"
+        else
+          TAG="${{ github.event.inputs.release_tag }}"
+        fi
+
+        echo "FINAL_TAG=$TAG" >> $GITHUB_ENV
+
+
+    - name: Create GitHub Release & Upload All Assets
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.FINAL_TAG }}
+        name: "Sixray Cepat Custom Build ${{ env.FINAL_TAG }}"
+        body: |
+          Sixray Cepat Custom Build
+          
+          Xray-core:
+          - libv2ray.aar v26.1.23
+
+          HEV:
+          - hev-socks5-tunnel
+
+          APK:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86
+          - x86_64
+
+        files: |
+          app/build/outputs/apk/*/release/*.apk
+          hev-socks5-tunnel-libs.zip
