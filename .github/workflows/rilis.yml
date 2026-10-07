@@ -179,7 +179,7 @@ jobs:
         echo "FINAL_TAG=$TAG" >> $GITHUB_ENV
 
     - name: Create GitHub Release & Upload All Assets
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         tag_name: ${{ env.FINAL_TAG }}
         name: "Sixray Cepat Custom Build ${{ env.FINAL_TAG }}"
