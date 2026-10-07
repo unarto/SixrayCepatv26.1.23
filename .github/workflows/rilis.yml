@@ -61,7 +61,7 @@ jobs:
 
     - name: Restore cached libv2ray
       id: cache-libv2ray-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ${{ github.workspace }}/v2ray_aar_bin
         key: libv2ray-${{ runner.os }}-${{ hashFiles('Androidlibxraylitev26.1.23/go.mod') }}-${{ hashFiles('Androidlibxraylitev26.1.23/gen_assets.sh') }}
@@ -80,7 +80,7 @@ jobs:
 
     - name: Save libv2ray
       if: steps.cache-libv2ray-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ${{ github.workspace }}/v2ray_aar_bin
         key: libv2ray-${{ runner.os }}-${{ hashFiles('Androidlibxraylitev26.1.23/go.mod') }}-${{ hashFiles('Androidlibxraylitev26.1.23/gen_assets.sh') }}
@@ -93,7 +93,7 @@ jobs:
     # --- BAGIAN 2: CACHE & COMPILE LIBHEVTUN ---
     - name: Restore cached libhevtun
       id: cache-libhevtun-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ${{ github.workspace }}/libs
         key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
@@ -105,7 +105,7 @@ jobs:
     
     - name: Save libhevtun
       if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ${{ github.workspace }}/libs
         key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
